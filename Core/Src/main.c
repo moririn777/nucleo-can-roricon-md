@@ -2,16 +2,29 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#define __FPU_PRESENT 1
+#define __FPU_USED 1
+#define USE_FULL_ASSERT 1
+
 CAN_HandleTypeDef hcan;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim6;
 CAN_FilterTypeDef filter;
 CAN_RxHeaderTypeDef RxHeader;
 UART_HandleTypeDef huart2;
 
+const uint16_t ENCODER_PPR = 2048;
 uint8_t RxData[4];
 uint32_t id, dlc, data;
+volatile uint32_t en1=0;
+volatile uint32_t en2=0;
+uint32_t cnt1=0;
+uint32_t cnt2=0;
+
+volatile double rotations1 = 0.0;
+volatile double rotations2 = 0.0;
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -20,6 +33,7 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM6_Init(void);
 
 void Filter_Init();
 
@@ -31,14 +45,19 @@ int main() {
 	MX_CAN_Init();
 	MX_TIM1_Init();
 	MX_TIM2_Init();
+	MX_TIM6_Init();
 	MX_USART2_UART_Init();
 	MX_TIM3_Init();
 
 	HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_1);
 	HAL_TIM_PWM_Start(&htim3,TIM_CHANNEL_2);
 
-	Filter_Init();
+	printf("Start EncorderMode\r\n");
+	HAL_TIM_Encoder_Start(&htim1,TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim2,TIM_CHANNEL_ALL);
+
 	printf("Start CAN Rx\r\n");
+	Filter_Init();
 	HAL_CAN_Start(&hcan);
 
 
@@ -46,17 +65,76 @@ int main() {
 		printf("Error: Can't activate notification.");
 		Error_Handler();
 	}
+    HAL_TIM_Base_Start_IT(&htim6);
 
 	while (true) {
+		/*cnt1 = __HAL_TIM_GET_COUNTER(&htim1);
+		printf("enc1 : %d\r\n", cnt1);
+		HAL_Delay(300);
+		cnt2 = __HAL_TIM_GET_COUNTER(&htim2);
+		printf("enc2 : %d\r\n", cnt2);
+		HAL_Delay(300);*/
+
+		int32_t cnt1 = __HAL_TIM_GET_COUNTER(&htim1);
+		float rotations = (float)cnt1 / 2048.0;
+		float angle = (float)(cnt1 % 2048) / 2048.0 * 360.0;
+
+		printf("enc1 : %d, rotations: %.2f, angle: %.2f degrees\r\n", cnt1, rotations, angle);
+		HAL_Delay(300);
+
+		int32_t cnt2 = __HAL_TIM_GET_COUNTER(&htim2);
+		rotations = (float)cnt2 / 2048.0;
+		angle = (float)(cnt2 % 2048) / 2048.0 * 360.0;
+
+		printf("enc2 : %d, rotations: %.2f, angle: %.2f degrees\r\n", cnt2, rotations, angle);
+		HAL_Delay(300);
+
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,1);
-		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,RxData[2]);
-		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,RxData[3]);
+
+		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,100);
+		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,255);
 	}
 }
 
 int _write(int file, char *ptr, int len) {
 	HAL_UART_Transmit(&huart2, (uint8_t*) ptr, len, 10);
 	return len;
+}
+
+void TIM6_DAC_IRQHandler(void) {
+    HAL_TIM_IRQHandler(&htim6);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM6) { // 1秒ごとに割り込みを発生
+        uint32_t rpm1 = (en1 * 60 * 10)/ENCODER_PPR;
+        uint32_t rpm2 = (en2 * 60 * 10)/ENCODER_PPR;
+        en1 = 0;
+        en2 = 0;
+        // 結果
+        printf("RPM1: %lu, Rotations1: %.2f\r\n", rpm1, rotations1);
+		printf("RPM2: %lu, Rotations2: %.2f\r\n", rpm2, rotations2);
+    }
+}
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+    if (GPIO_Pin == GPIO_PIN_0) {
+    	en1++;
+    	rotations1 = ((float)en1 / ENCODER_PPR) * 360.0;
+    } else if (GPIO_Pin == GPIO_PIN_1) {
+    	en2++;
+    	rotations2 = ((float)en2 / ENCODER_PPR) * 360.0;
+    }
+}
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
+	if (htim->Instance == TIM1) {
+		uint32_t count = __HAL_TIM_GET_COUNTER(htim);
+		printf("Encoder 1 Count: %lu\r\n", count);
+	}
+	if (htim->Instance == TIM2) {
+		uint32_t count = __HAL_TIM_GET_COUNTER(htim);
+		printf("Encoder 2 Count: %lu\r\n", count);
+	}
 }
 
 void Filter_Init() {
@@ -96,7 +174,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 
 	}
 }
-
+/*AUTO GEN*/
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -325,6 +403,44 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 2 */
   HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 64000-1;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 1000-1;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
 
 }
 
