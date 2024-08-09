@@ -13,8 +13,6 @@
 |PA9|encoder2_B|
 |PA11|CAN_RX|
 |PA12|CAN_TX|
-|PA13|SYS_JTCK-SWCLK|
-|PA14|SYS_JTMS-SWDIO|
 |PA15|USART2_RX|
 |PB0|encoder1_X|
 |PB1|encoder2_X|  
@@ -71,4 +69,4 @@ Activated
 Prescaler 4  
 Time Quanta in Bit Segment 1 : 11 Times  
 Time Quanta in Bit Segment 2 :  4 Times  
-ReSynchronization Jump Width :  1 Times 
+ReSynchronization Jump Width :  1 Times  
