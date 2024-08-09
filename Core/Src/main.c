@@ -2,26 +2,27 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-#define __FPU_PRESENT 1
-#define __FPU_USED 1
-#define USE_FULL_ASSERT 1
-
 CAN_HandleTypeDef hcan;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim6;
+
+DMA_HandleTypeDef hdma_tim1_up;
+DMA_HandleTypeDef hdma_tim2_up;
+
 CAN_FilterTypeDef filter;
 CAN_RxHeaderTypeDef RxHeader;
 UART_HandleTypeDef huart2;
 
-const uint16_t ENCODER_PPR = 2048;
+const uint32_t ENCODER_PPR = 2048;
+
 uint8_t RxData[4];
 uint32_t id, dlc, data;
-volatile uint32_t en1=0;
-volatile uint32_t en2=0;
-uint32_t cnt1=0;
-uint32_t cnt2=0;
+
+uint32_t current_time;
+int32_t cnt1_start, cnt1_end;
+float rotations_per_second, rpm;
 
 volatile double rotations1 = 0.0;
 volatile double rotations2 = 0.0;
@@ -68,23 +69,17 @@ int main() {
     HAL_TIM_Base_Start_IT(&htim6);
 
 	while (true) {
-		/*cnt1 = __HAL_TIM_GET_COUNTER(&htim1);
-		printf("enc1 : %d\r\n", cnt1);
-		HAL_Delay(300);
-		cnt2 = __HAL_TIM_GET_COUNTER(&htim2);
-		printf("enc2 : %d\r\n", cnt2);
-		HAL_Delay(300);*/
 
 		int32_t cnt1 = __HAL_TIM_GET_COUNTER(&htim1);
-		float rotations = (float)cnt1 / 2048.0;
-		float angle = (float)(cnt1 % 2048) / 2048.0 * 360.0;
+		float rotations = (float)cnt1 / ENCODER_PPR ;
+		float angle = (float)(cnt1 % ENCODER_PPR) / (float)ENCODER_PPR * 360.0;
 
 		printf("enc1 : %d, rotations: %.2f, angle: %.2f degrees\r\n", cnt1, rotations, angle);
 		HAL_Delay(300);
 
 		int32_t cnt2 = __HAL_TIM_GET_COUNTER(&htim2);
-		rotations = (float)cnt2 / 2048.0;
-		angle = (float)(cnt2 % 2048) / 2048.0 * 360.0;
+		rotations = (float)cnt2 / ENCODER_PPR;
+		angle = (float)(cnt2 % ENCODER_PPR) / (float)ENCODER_PPR * 360.0;
 
 		printf("enc2 : %d, rotations: %.2f, angle: %.2f degrees\r\n", cnt2, rotations, angle);
 		HAL_Delay(300);
@@ -105,26 +100,6 @@ void TIM6_DAC_IRQHandler(void) {
     HAL_TIM_IRQHandler(&htim6);
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM6) { // 1秒ごとに割り込みを発生
-        uint32_t rpm1 = (en1 * 60 * 10)/ENCODER_PPR;
-        uint32_t rpm2 = (en2 * 60 * 10)/ENCODER_PPR;
-        en1 = 0;
-        en2 = 0;
-        // 結果
-        printf("RPM1: %lu, Rotations1: %.2f\r\n", rpm1, rotations1);
-		printf("RPM2: %lu, Rotations2: %.2f\r\n", rpm2, rotations2);
-    }
-}
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-    if (GPIO_Pin == GPIO_PIN_0) {
-    	en1++;
-    	rotations1 = ((float)en1 / ENCODER_PPR) * 360.0;
-    } else if (GPIO_Pin == GPIO_PIN_1) {
-    	en2++;
-    	rotations2 = ((float)en2 / ENCODER_PPR) * 360.0;
-    }
-}
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM1) {
@@ -174,7 +149,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 
 	}
 }
-/*AUTO GEN*/
+/*AUTO GENERATE*/
+
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -216,21 +192,9 @@ void SystemClock_Config(void)
   }
 }
 
-/**
-  * @brief CAN Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_CAN_Init(void)
 {
 
-  /* USER CODE BEGIN CAN_Init 0 */
-
-  /* USER CODE END CAN_Init 0 */
-
-  /* USER CODE BEGIN CAN_Init 1 */
-
-  /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN;
   hcan.Init.Prescaler = 4;
   hcan.Init.Mode = CAN_MODE_NORMAL;
@@ -247,17 +211,9 @@ static void MX_CAN_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN CAN_Init 2 */
-
-  /* USER CODE END CAN_Init 2 */
 
 }
 
-/**
-  * @brief TIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_TIM1_Init(void)
 {
 
@@ -347,17 +303,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM2_Init 2 */
 
-  /* USER CODE END TIM2_Init 2 */
-
-}
-
-/**
-  * @brief TIM3 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_TIM3_Init(void)
 {
 
@@ -452,13 +398,6 @@ static void MX_TIM6_Init(void)
 static void MX_USART2_UART_Init(void)
 {
 
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -476,6 +415,25 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 

@@ -24,6 +24,9 @@
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
+extern DMA_HandleTypeDef hdma_tim1_up;
+
+extern DMA_HandleTypeDef hdma_tim2_up;
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */
@@ -183,6 +186,23 @@ void HAL_TIM_Encoder_MspInit(TIM_HandleTypeDef* htim_encoder)
     GPIO_InitStruct.Alternate = GPIO_AF6_TIM1;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+    /* TIM1 DMA Init */
+    /* TIM1_UP Init */
+    hdma_tim1_up.Instance = DMA1_Channel5;
+    hdma_tim1_up.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_tim1_up.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_tim1_up.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_tim1_up.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_tim1_up.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+    hdma_tim1_up.Init.Mode = DMA_CIRCULAR;
+    hdma_tim1_up.Init.Priority = DMA_PRIORITY_MEDIUM;
+    if (HAL_DMA_Init(&hdma_tim1_up) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(htim_encoder,hdma[TIM_DMA_ID_UPDATE],hdma_tim1_up);
+
   /* USER CODE BEGIN TIM1_MspInit 1 */
 
   /* USER CODE END TIM1_MspInit 1 */
@@ -206,6 +226,23 @@ void HAL_TIM_Encoder_MspInit(TIM_HandleTypeDef* htim_encoder)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    /* TIM2 DMA Init */
+    /* TIM2_UP Init */
+    hdma_tim2_up.Instance = DMA1_Channel2;
+    hdma_tim2_up.Init.Direction = DMA_PERIPH_TO_MEMORY;
+    hdma_tim2_up.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_tim2_up.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_tim2_up.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_tim2_up.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+    hdma_tim2_up.Init.Mode = DMA_CIRCULAR;
+    hdma_tim2_up.Init.Priority = DMA_PRIORITY_MEDIUM;
+    if (HAL_DMA_Init(&hdma_tim2_up) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(htim_encoder,hdma[TIM_DMA_ID_UPDATE],hdma_tim2_up);
 
   /* USER CODE BEGIN TIM2_MspInit 1 */
 
@@ -309,6 +346,8 @@ void HAL_TIM_Encoder_MspDeInit(TIM_HandleTypeDef* htim_encoder)
     */
     HAL_GPIO_DeInit(GPIOA, GPIO_PIN_8|GPIO_PIN_9);
 
+    /* TIM1 DMA DeInit */
+    HAL_DMA_DeInit(htim_encoder->hdma[TIM_DMA_ID_UPDATE]);
   /* USER CODE BEGIN TIM1_MspDeInit 1 */
 
   /* USER CODE END TIM1_MspDeInit 1 */
@@ -327,6 +366,8 @@ void HAL_TIM_Encoder_MspDeInit(TIM_HandleTypeDef* htim_encoder)
     */
     HAL_GPIO_DeInit(GPIOA, GPIO_PIN_0|GPIO_PIN_1);
 
+    /* TIM2 DMA DeInit */
+    HAL_DMA_DeInit(htim_encoder->hdma[TIM_DMA_ID_UPDATE]);
   /* USER CODE BEGIN TIM2_MspDeInit 1 */
 
   /* USER CODE END TIM2_MspDeInit 1 */
