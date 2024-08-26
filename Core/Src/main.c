@@ -1,31 +1,36 @@
 #include "main.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 CAN_HandleTypeDef hcan;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
-TIM_HandleTypeDef htim6;
-
-DMA_HandleTypeDef hdma_tim1_up;
-DMA_HandleTypeDef hdma_tim2_up;
 
 CAN_FilterTypeDef filter;
 CAN_RxHeaderTypeDef RxHeader;
 UART_HandleTypeDef huart2;
 
-const uint32_t ENCODER_PPR = 2048;
+uint8_t RxData[8];
+uint32_t id, dlc;
+uint64_t data;
 
-uint8_t RxData[4];
-uint32_t id, dlc, data;
+int16_t RPM[4];
 
-uint32_t current_time;
-int32_t cnt1_start, cnt1_end;
-float rotations_per_second, rpm;
+int16_t prev_count = 0;
 
-volatile double rotations1 = 0.0;
-volatile double rotations2 = 0.0;
+const float TARGET_RPM = 200;  // 目標RPM
+const float kp = 0.9f, ki = 0.15f, kd = 0.02f;
+float integral = 0.0f, previous_error = 0.0f;
+const uint16_t ENCODER_PPR = 2048;
+const float SAMPLING_TIME =0.01;
+
+const uint8_t MIN_DUTY = 70;
+const uint16_t MAX_DUTY = 1023;
+
+const uint8_t START_PID_NUM = 10;
+float output = (float)MIN_DUTY;
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -34,9 +39,11 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM6_Init(void);
 
-void Filter_Init();
+float calculate_rpm(int16_t);
+float pid_control(float);
+void Filter_Init(void);
+int16_t get_count(TIM_HandleTypeDef*);
 
 int main() {
 	setbuf(stdout, NULL);
@@ -46,7 +53,6 @@ int main() {
 	MX_CAN_Init();
 	MX_TIM1_Init();
 	MX_TIM2_Init();
-	MX_TIM6_Init();
 	MX_USART2_UART_Init();
 	MX_TIM3_Init();
 
@@ -66,28 +72,29 @@ int main() {
 		printf("Error: Can't activate notification.");
 		Error_Handler();
 	}
-    HAL_TIM_Base_Start_IT(&htim6);
 
 	while (true) {
+			_Bool motor1_dir = 0;
+			_Bool motor2_dir = 0;
 
-		int32_t cnt1 = __HAL_TIM_GET_COUNTER(&htim1);
-		float rotations = (float)cnt1 / ENCODER_PPR ;
-		float angle = (float)(cnt1 % ENCODER_PPR) / (float)ENCODER_PPR * 360.0;
+			int16_t count = get_count(&htim1);
+			float rpm = calculate_rpm(count);
+			printf("count: %4d  rpm: %4d \r\n", count,(int)rpm);
 
-		printf("enc1 : %d, rotations: %.2f, angle: %.2f degrees\r\n", cnt1, rotations, angle);
-		HAL_Delay(300);
+			/*float output = pid_control(rpm);
+			pid_control(abs(RxData[0]));
+			printf("output %4d\r\n", (int)output);
+			__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (int)output);
+			HAL_Delay(SAMPLING_TIME * 1000);
+			*/
 
-		int32_t cnt2 = __HAL_TIM_GET_COUNTER(&htim2);
-		rotations = (float)cnt2 / ENCODER_PPR;
-		angle = (float)(cnt2 % ENCODER_PPR) / (float)ENCODER_PPR * 360.0;
+			RPM[2]< 0 ? (motor1_dir = 1): (motor1_dir = 0);
+			RPM[3]< 0 ? (motor2_dir = 1): (motor2_dir = 0);
+			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,motor1_dir);
+			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,motor2_dir);
+			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,abs(RPM[2])*2);
+			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,abs(RPM[3])*2);
 
-		printf("enc2 : %d, rotations: %.2f, angle: %.2f degrees\r\n", cnt2, rotations, angle);
-		HAL_Delay(300);
-
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,1);
-
-		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,100);
-		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,255);
 	}
 }
 
@@ -96,23 +103,55 @@ int _write(int file, char *ptr, int len) {
 	return len;
 }
 
-void TIM6_DAC_IRQHandler(void) {
-    HAL_TIM_IRQHandler(&htim6);
+int16_t get_count(TIM_HandleTypeDef* htimx) {
+	int16_t count = __HAL_TIM_GET_COUNTER(htimx);
+	__HAL_TIM_SET_COUNTER(htimx, 0);
+	return count;
 }
 
+float calculate_rpm(int16_t current_count) {
+	float rpm = ((float)current_count * 60.) / ((float)ENCODER_PPR * SAMPLING_TIME);//RPMを計算
 
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
-	if (htim->Instance == TIM1) {
-		uint32_t count = __HAL_TIM_GET_COUNTER(htim);
-		printf("Encoder 1 Count: %lu\r\n", count);
+	if (rpm < 0) {
+		return rpm * -1.;
 	}
-	if (htim->Instance == TIM2) {
-		uint32_t count = __HAL_TIM_GET_COUNTER(htim);
-		printf("Encoder 2 Count: %lu\r\n", count);
-	}
+	return rpm;
 }
 
-void Filter_Init() {
+float clamp(float value) {
+    if (value < MIN_DUTY) return MIN_DUTY;
+    if (value > MAX_DUTY) return MAX_DUTY;
+    return value;
+}
+
+float pid_control(float current_rpm) {
+	if (TARGET_RPM == 0) {
+			return 0;
+		}
+	float error = TARGET_RPM - current_rpm;
+
+	integral += error * SAMPLING_TIME;
+	float derivative = (error - previous_error) / SAMPLING_TIME;
+	previous_error = error;
+
+	float pid_output = kp * error + ki * integral + kd * derivative;
+
+	if(error > START_PID_NUM){
+		return clamp(output++);
+		HAL_Delay(1);
+	} else if(error< -START_PID_NUM){
+		return clamp(output--);
+		HAL_Delay(1);
+	}
+	output = clamp(MIN_DUTY + pid_output);
+
+	if (output == MIN_DUTY || output == MAX_DUTY) {
+		integral -= error * SAMPLING_TIME;
+	}
+	return output;
+}
+
+void Filter_Init(void) {
 	filter.FilterIdHigh = 0;  			//canIDの上位16bit
 	filter.FilterIdLow = 0;  			//canIDの下位16bit(標準IDは11bitのため０)
 	filter.FilterMaskIdHigh = 0;  		//上位16bitの中から比較する範囲を指定
@@ -127,30 +166,24 @@ void Filter_Init() {
 }
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
-	printf("Run: Interrupt.");
 	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
 		id = (RxHeader.IDE == CAN_ID_STD) ? RxHeader.StdId : RxHeader.ExtId; 		//IDEがSTDならばStdIdを取得
 		dlc = RxHeader.DLC; 		//フレームの大きさ
 
-		data = 0x00;
-		for (uint8_t i = 0; i < 4; i++) {
-			data |= (uint32_t) RxData[i] << (24 - 8 * i);
+		for (uint8_t i = 0; i < 8; i++) {
+			data |= ((uint64_t)RxData[i] << (56 - 8 * i));
 		}
-
-		printf("ID: %#x\r\n", (int) id);
-		printf("DLC: %#x\r\n", (int) dlc);
+		//printf("ID: %#x DLC: %#x\r\n", (int) id ,(int) dlc);
+		printf("data: 0x%016llX\r\n", data);
 
 		for (uint8_t i = 0; i < 4; i++) {
-			printf("RxData[%d]: %#x ", i, RxData[i]);
+			RPM[i] = (int16_t)((RxData[2*i] << 8) | RxData[2*i + 1]);
 		}
-		printf("\r\n");
-
-		printf("data: %u\r\n", data);
-
+		for (uint8_t i = 0; i < 4; i++) {
+		    printf("RPM[%d]: %04d\r\n", i + 1, RPM[i]);
+		}
 	}
 }
-/*AUTO GENERATE*/
-
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -192,9 +225,21 @@ void SystemClock_Config(void)
   }
 }
 
+/**
+  * @brief CAN Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_CAN_Init(void)
 {
 
+  /* USER CODE BEGIN CAN_Init 0 */
+
+  /* USER CODE END CAN_Init 0 */
+
+  /* USER CODE BEGIN CAN_Init 1 */
+
+  /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN;
   hcan.Init.Prescaler = 4;
   hcan.Init.Mode = CAN_MODE_NORMAL;
@@ -211,9 +256,17 @@ static void MX_CAN_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN CAN_Init 2 */
+
+  /* USER CODE END CAN_Init 2 */
 
 }
 
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_TIM1_Init(void)
 {
 
@@ -303,7 +356,17 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN TIM2_Init 2 */
 
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_TIM3_Init(void)
 {
 
@@ -353,44 +416,6 @@ static void MX_TIM3_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM6_Init(void)
-{
-
-  /* USER CODE BEGIN TIM6_Init 0 */
-
-  /* USER CODE END TIM6_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM6_Init 1 */
-
-  /* USER CODE END TIM6_Init 1 */
-  htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 64000-1;
-  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 1000-1;
-  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM6_Init 2 */
-
-  /* USER CODE END TIM6_Init 2 */
-
-}
-
-/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -398,6 +423,13 @@ static void MX_TIM6_Init(void)
 static void MX_USART2_UART_Init(void)
 {
 
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -415,25 +447,6 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
-
-}
-
-/**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
-  /* DMA1_Channel5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 
