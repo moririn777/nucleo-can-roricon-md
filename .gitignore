@@ -69,3 +69,9 @@ release
 # Ignore all local history of files
 .history
 .ionide
+
+###CubeIDE
+./Debug/
+./Release/
+.mxproject
+.*.launch
