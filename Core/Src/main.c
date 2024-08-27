@@ -21,16 +21,16 @@ int16_t RPM[4];
 int16_t prev_count = 0;
 
 const float TARGET_RPM = 200;  // 目標RPM
-const float kp = 0.9f, ki = 0.15f, kd = 0.02f;
+const float kp = 0.9f, ki = 0.1f, kd = 0.02f;
 float integral = 0.0f, previous_error = 0.0f;
 const uint16_t ENCODER_PPR = 2048;
 const float SAMPLING_TIME =0.01;
 
-const uint8_t MIN_DUTY = 70;
-const uint16_t MAX_DUTY = 1023;
+const uint8_t MIN_DUTY = 50;
+const uint16_t MAX_DUTY = 255;
 
-const uint8_t START_PID_NUM = 10;
-float output = (float)MIN_DUTY;
+const uint8_t START_PID_NUM = 80;
+float output = 0;
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -74,27 +74,24 @@ int main() {
 	}
 
 	while (true) {
-			_Bool motor1_dir = 0;
-			_Bool motor2_dir = 0;
 
-			int16_t count = get_count(&htim1);
-			float rpm = calculate_rpm(count);
-			printf("count: %4d  rpm: %4d \r\n", count,(int)rpm);
+		/*PID制御のテスト*/
+		/*int16_t count = get_count(&htim1);
+		float rpm = calculate_rpm(count);
+		printf("rpm: %4d \r\n",(int)rpm);
 
-			/*float output = pid_control(rpm);
-			pid_control(abs(RxData[0]));
-			printf("output %4d\r\n", (int)output);
-			__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (int)output);
-			HAL_Delay(SAMPLING_TIME * 1000);
-			*/
+		float output = pid_control(rpm);
+		printf("output %4d\r\n", (int)output);
+		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (int)output);
+		HAL_Delay(SAMPLING_TIME * 1000);*/
 
-			RPM[2]< 0 ? (motor1_dir = 1): (motor1_dir = 0);
-			RPM[3]< 0 ? (motor2_dir = 1): (motor2_dir = 0);
-			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,motor1_dir);
-			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,motor2_dir);
-			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,abs(RPM[2])*2);
-			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,abs(RPM[3])*2);
-
+		_Bool motor1_dir = 0, motor2_dir = 0;
+		RPM[2]< 0 ? (motor1_dir = 1): (motor1_dir = 0);
+		RPM[3]< 0 ? (motor2_dir = 1): (motor2_dir = 0);
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,motor1_dir);
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,motor2_dir);
+		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,abs(RPM[2])*2);
+		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,abs(RPM[3])*2);
 	}
 }
 
@@ -130,19 +127,13 @@ float pid_control(float current_rpm) {
 		}
 	float error = TARGET_RPM - current_rpm;
 
+
 	integral += error * SAMPLING_TIME;
 	float derivative = (error - previous_error) / SAMPLING_TIME;
 	previous_error = error;
 
 	float pid_output = kp * error + ki * integral + kd * derivative;
 
-	if(error > START_PID_NUM){
-		return clamp(output++);
-		HAL_Delay(1);
-	} else if(error< -START_PID_NUM){
-		return clamp(output--);
-		HAL_Delay(1);
-	}
 	output = clamp(MIN_DUTY + pid_output);
 
 	if (output == MIN_DUTY || output == MAX_DUTY) {
