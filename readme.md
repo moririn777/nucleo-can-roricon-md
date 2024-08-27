@@ -1,4 +1,7 @@
 # README  
+# NucleoF303K8を用いて、ロータリーエンコーダーでRPMを読み取り、ESP32からCANで送られてきたデータに基づき2個のモーターを制御する
+
+
 ## PINの機能  
 |PIN|機能|
 |:---:|:---:|
@@ -7,14 +10,12 @@
 |PA2|USART2_Tx|  
 |PA3|motor1_dir|  
 |PA4|motor1_pwm|
-|PA5|motor1_dir|
-|PA6|motor1_pwm|
+|PA5|motor2_dir|
+|PA6|motor2_pwm|
 |PA8|encoder2_A|
 |PA9|encoder2_B|
 |PA11|CAN_RX|
 |PA12|CAN_TX|
-|PA13|SYS_JTCK-SWCLK|
-|PA14|SYS_JTMS-SWDIO|
 |PA15|USART2_RX|
 |PB0|encoder1_X|
 |PB1|encoder2_X|  
