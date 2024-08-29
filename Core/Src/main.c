@@ -12,24 +12,26 @@ CAN_FilterTypeDef filter;
 CAN_RxHeaderTypeDef RxHeader;
 UART_HandleTypeDef huart2;
 
+/*CANで用いる変数*/
 uint8_t RxData[8];
 uint32_t id, dlc;
 uint64_t data;
-
 int16_t RPM[4];
 
-int16_t prev_count = 0;
+/*エンコーダの定数*/
+const uint16_t ENCODER_PPR = 2048; //エンコーダの分解能
+const float SAMPLING_TIME =0.01; //エンコーダーの割り込み時間
+
 
 const float TARGET_RPM = 200;  // 目標RPM
-const float kp = 0.9f, ki = 0.1f, kd = 0.02f;
-float integral = 0.0f, previous_error = 0.0f;
-const uint16_t ENCODER_PPR = 2048;
-const float SAMPLING_TIME =0.01;
+const float kp = 0.9f, ki = 0.1f, kd = 0.02f; //PID制御の各パラメータ
+float integral = 0.0f, derivative=0.0f, previous_error = 0.0f;
+const uint8_t START_PID_NUM = 80; //PID制御を開始する差の値
 
-const uint8_t MIN_DUTY = 50;
-const uint16_t MAX_DUTY = 255;
+//duty比の限界値
+const uint8_t MIN_DUTY = 50; //MIN
+const uint16_t MAX_DUTY = 1023; //MAX
 
-const uint8_t START_PID_NUM = 80;
 float output = 0;
 
 void SystemClock_Config(void);
@@ -76,22 +78,22 @@ int main() {
 	while (true) {
 
 		/*PID制御のテスト*/
-		/*int16_t count = get_count(&htim1);
+		int16_t count = get_count(&htim1);
 		float rpm = calculate_rpm(count);
 		printf("rpm: %4d \r\n",(int)rpm);
-
 		float output = pid_control(rpm);
 		printf("output %4d\r\n", (int)output);
 		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (int)output);
-		HAL_Delay(SAMPLING_TIME * 1000);*/
+		HAL_Delay(SAMPLING_TIME * 1000);
 
-		_Bool motor1_dir = 0, motor2_dir = 0;
+		/*_Bool motor1_dir = 0, motor2_dir = 0;
 		RPM[2]< 0 ? (motor1_dir = 1): (motor1_dir = 0);
 		RPM[3]< 0 ? (motor2_dir = 1): (motor2_dir = 0);
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,motor1_dir);
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,motor2_dir);
 		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,abs(RPM[2])*2);
 		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,abs(RPM[3])*2);
+		*/
 	}
 }
 
@@ -115,28 +117,35 @@ float calculate_rpm(int16_t current_count) {
 	return rpm;
 }
 
-float clamp(float value) {
+float clamp(float value) {//outputの値を範囲内に収める
     if (value < MIN_DUTY) return MIN_DUTY;
     if (value > MAX_DUTY) return MAX_DUTY;
     return value;
 }
 
 float pid_control(float current_rpm) {
-	if (TARGET_RPM == 0) {
+	if (TARGET_RPM == 0) {//目標値が０の場合は出力しない
 			return 0;
 		}
-	float error = TARGET_RPM - current_rpm;
 
-
-	integral += error * SAMPLING_TIME;
-	float derivative = (error - previous_error) / SAMPLING_TIME;
+	float error = TARGET_RPM - current_rpm;//目標値との誤差
+	integral += error * SAMPLING_TIME; //積分項の計算 (時間に対する誤差の累積値)
+	derivative = (error - previous_error) / SAMPLING_TIME; //微分項の計算 (誤差の変化率)
 	previous_error = error;
 
 	float pid_output = kp * error + ki * integral + kd * derivative;
 
-	output = clamp(MIN_DUTY + pid_output);
+	if(error > START_PID_NUM){
+		HAL_Delay(10);
+		return clamp(output++);
+	} else if(error< -1*START_PID_NUM){
+		HAL_Delay(10);
+		return clamp(output--);
+	}
 
-	if (output == MIN_DUTY || output == MAX_DUTY) {
+	output = clamp(MIN_DUTY + pid_output);//OUTPUTの調整
+
+	if (output == MIN_DUTY || output == MAX_DUTY) {//目標値を超えた場合の積分項の蓄積を防ぐ
 		integral -= error * SAMPLING_TIME;
 	}
 	return output;
@@ -372,7 +381,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0;
+  htim3.Init.Prescaler = 4;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 255;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
