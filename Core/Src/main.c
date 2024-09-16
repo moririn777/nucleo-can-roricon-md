@@ -18,19 +18,11 @@ uint64_t data;
 
 int16_t RPM[4];
 
-int16_t prev_count = 0;
-
-const float TARGET_RPM = 200;  // 目標RPM
-const float kp = 0.9f, ki = 0.1f, kd = 0.02f;
-float integral = 0.0f, previous_error = 0.0f;
-const uint16_t ENCODER_PPR = 2048;
-const float SAMPLING_TIME =0.01;
-
-const uint8_t MIN_DUTY = 50;
-const uint16_t MAX_DUTY = 255;
-
-const uint8_t START_PID_NUM = 80;
-float output = 0;
+/*motor*/
+const uint8_t FRONTLEFT = 0;
+const uint8_t FRONTRIGHT = 1;
+const uint8_t REARLFT = 2;
+const uint8_t REARRIGHT = 3;
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -74,72 +66,24 @@ int main() {
 	}
 
 	while (true) {
+		_Bool motor1_dir;
+		_Bool motor2_dir;
 
-		/*PID制御のテスト*/
-		/*int16_t count = get_count(&htim1);
-		float rpm = calculate_rpm(count);
-		printf("rpm: %4d \r\n",(int)rpm);
+		motor1_dir = RPM[FRONTLEFT]< 0 ? 1: 0;
+		motor2_dir = RPM[FRONTRIGHT]< 0 ? 1: 0;
 
-		float output = pid_control(rpm);
-		printf("output %4d\r\n", (int)output);
-		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, (int)output);
-		HAL_Delay(SAMPLING_TIME * 1000);*/
-
-		_Bool motor1_dir = 0, motor2_dir = 0;
-		RPM[2]< 0 ? (motor1_dir = 1): (motor1_dir = 0);
-		RPM[3]< 0 ? (motor2_dir = 1): (motor2_dir = 0);
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,motor1_dir);
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,motor2_dir);
-		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,abs(RPM[2])*2);
-		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,abs(RPM[3])*2);
+
+		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,abs(RPM[FRONTLEFT]));
+		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,abs(RPM[FRONTRIGHT]));
+
 	}
 }
 
 int _write(int file, char *ptr, int len) {
 	HAL_UART_Transmit(&huart2, (uint8_t*) ptr, len, 10);
 	return len;
-}
-
-int16_t get_count(TIM_HandleTypeDef* htimx) {
-	int16_t count = __HAL_TIM_GET_COUNTER(htimx);
-	__HAL_TIM_SET_COUNTER(htimx, 0);
-	return count;
-}
-
-float calculate_rpm(int16_t current_count) {
-	float rpm = ((float)current_count * 60.) / ((float)ENCODER_PPR * SAMPLING_TIME);//RPMを計算
-
-	if (rpm < 0) {
-		return rpm * -1.;
-	}
-	return rpm;
-}
-
-float clamp(float value) {
-    if (value < MIN_DUTY) return MIN_DUTY;
-    if (value > MAX_DUTY) return MAX_DUTY;
-    return value;
-}
-
-float pid_control(float current_rpm) {
-	if (TARGET_RPM == 0) {
-			return 0;
-		}
-	float error = TARGET_RPM - current_rpm;
-
-
-	integral += error * SAMPLING_TIME;
-	float derivative = (error - previous_error) / SAMPLING_TIME;
-	previous_error = error;
-
-	float pid_output = kp * error + ki * integral + kd * derivative;
-
-	output = clamp(MIN_DUTY + pid_output);
-
-	if (output == MIN_DUTY || output == MAX_DUTY) {
-		integral -= error * SAMPLING_TIME;
-	}
-	return output;
 }
 
 void Filter_Init(void) {
@@ -160,12 +104,6 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
 		id = (RxHeader.IDE == CAN_ID_STD) ? RxHeader.StdId : RxHeader.ExtId; 		//IDEがSTDならばStdIdを取得
 		dlc = RxHeader.DLC; 		//フレームの大きさ
-
-		for (uint8_t i = 0; i < 8; i++) {
-			data |= ((uint64_t)RxData[i] << (56 - 8 * i));
-		}
-		//printf("ID: %#x DLC: %#x\r\n", (int) id ,(int) dlc);
-		printf("data: 0x%016llX\r\n", data);
 
 		for (uint8_t i = 0; i < 4; i++) {
 			RPM[i] = (int16_t)((RxData[2*i] << 8) | RxData[2*i + 1]);
@@ -223,14 +161,6 @@ void SystemClock_Config(void)
   */
 static void MX_CAN_Init(void)
 {
-
-  /* USER CODE BEGIN CAN_Init 0 */
-
-  /* USER CODE END CAN_Init 0 */
-
-  /* USER CODE BEGIN CAN_Init 1 */
-
-  /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN;
   hcan.Init.Prescaler = 4;
   hcan.Init.Mode = CAN_MODE_NORMAL;
